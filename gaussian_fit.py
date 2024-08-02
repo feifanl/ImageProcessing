@@ -2,6 +2,7 @@ import numpy as np
 from scipy.optimize import curve_fit
 import matplotlib.pyplot as plt
 import os
+import cv2
 
 def gaussian(x, mean, amp, stddev): 
     """
@@ -73,7 +74,7 @@ def calculate_normalized_mse(observed, predicted):
     return mse / np.var(observed)
     
 # Adjust max_iterations, threshold_factor and mse_threshold as necessary
-def iterative_gaussian_fit(data, output_dir, file_name, max_iterations=5, threshold_factor=5, mse_threshold=1e-10):
+def iterative_gaussian_fit(data, output_dir, file_name, max_iterations=20, nmse_threshold = 0.001):
     """
     Iteratively fits a Gaussian to the data, trimming high-value pixels to improve the fit.
 
@@ -81,37 +82,55 @@ def iterative_gaussian_fit(data, output_dir, file_name, max_iterations=5, thresh
     data (array): 196,000 pixel values after division and flattening
     output_dir (str): Directory where output file will be stored, same output_dir as divide_images
     file_name (str): Name of the outputted plot, same file_name as divide_images
-    max_iterations (int, optional): The maximum number of iterations for refitting, default is 5
-    threshold_factor (float, optional): Factor to adjust trim of high-value pixels, default is 5
-    mse_threshold (float, optional): Threshold to determining improvement in NMSE, default is 1e-10
+    max_iterations (int, optional): The maximum number of iterations for refitting, default is 20
+    Adjust based on the left and right thresholds printed.
+    nmse_threshold (float, optional): Threshold to determine how much nmse has to decrease to stop iterating,
+    default is 0.0002
 
     Returns: None
     """
     
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-    # Setting NMSE as high as possible to compare with initial iteration
-    previous_nmse = float('inf')
+    # Tracking previous NMSE to see when to terminate loop
+    prev_nmse = 0
+    # Saving variables for normalization later 
+    # data_min = np.min(data)
+    # data_max = np.max(data)
     # Looping and refitting trimmed data to decrease NMSE
     for i in range(max_iterations):
         # Fit the data and retrieve important data
         popt, bin_centers, hist, fitted_values = fit_gaussian(data)
         # Calculate MSE and NMSE and print it out
         mse = calculate_mse(hist, fitted_values)
-        normalized_mse = calculate_normalized_mse(hist, fitted_values)
+        nmse = calculate_normalized_mse(hist, fitted_values)
         print(f'Iteration {i}')
         print(f'MSE: {mse}')
-        print(f'Normalized MSE: {normalized_mse}')
-        # If NMSE is not improving significantly (based on mse_threshold), terminate loop
-        if previous_nmse - normalized_mse < mse_threshold:
-            print('Stopping as NMSE did not improve significantly.')
-            break
-        # Set previous nmse as the current one to compare to next iteration
-        previous_nmse = normalized_mse
-        # Remove high-value pixels from the right side of the curve
-        threshold = np.mean(data) + threshold_factor * np.std(data)
-        data = data[data < threshold]
-    
+        print(f'Normalized MSE: {nmse}')
+        # Remove high-value pixels from the right and left side of the curve one standard deviation at a time
+        right_threshold = np.max(data) - np.std(data)
+        left_threshold = 2*np.mean(data) - right_threshold
+        print(f"right: {right_threshold}")
+        print(f"left: {left_threshold}")
+        print(f"size before: {data.size}")
+        # Uncomment next 5 lines if you want to see if # of iterations is enough (check saved image)
+        # To see if the bright and dark spots have disappeared
+        #  data = np.reshape(data,(1400,1400))
+        # for i in range(1400): 
+        #     for j in range(1400): 
+        #         if data[i][j] > right_threshold: data[i][j] = np.mean(data)
+        #         if data[i][j] < left_threshold: data[i][j] = np.mean(data)
+        data = data[(data > left_threshold) & (data < right_threshold)]
+        # Uncomment next 6 lines to check saved image
+        # output = data
+        # output = (output - data_min) / (data_max - data_min)
+        # output *= 65535
+        # # Convert from float to int
+        # output = np.array(output, dtype=np.uint16)
+        # cv2.imwrite(os.path.join(output_dir, f'trim_{file_name}'), output)
+        # data = data.flatten()
+        print(f"size after: {data.size}")
+
     # Plot the final gaussian and dataset
     fig, ax = plt.subplots()
     ax.hist(data, bins=len(bin_centers), density=False, alpha=0.6, color='g', label='Observed')
@@ -121,7 +140,9 @@ def iterative_gaussian_fit(data, output_dir, file_name, max_iterations=5, thresh
     ax.axvline(m, color='k', linestyle='dashed', label='Mean')
     ax.axvline(m + std, color='y', linestyle='dashed', label='Mean + Std Dev')
     ax.axvline(m - std, color='y', linestyle='dashed', label='Mean - Std Dev')
-    ax.set_title(f'Normalized MSE: {normalized_mse: .7f} Mean: {m: .5f} Std: {std: .6f}')
+    ax.set_title(f'Normalized MSE: {nmse: .7f} Mean: {m: .5f} Std: {std: .6f}')
     ax.legend()
-    fig.savefig(os.path.join(output_dir, f'finalfit_{file_name}'))
-    plt.close(fig)
+    plt.show()
+    # Uncomment next two lines to save the histogram to file directory
+    # fig.savefig(os.path.join(output_dir, f'finalfit_{file_name}'))
+    # plt.close(fig)
